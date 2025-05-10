@@ -34,16 +34,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install git+https://github.com/openai/whisper.git
 
+      - name: Set model variable
+        id: set_model
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "model=${{ github.event.inputs.model }}" >> $GITHUB_OUTPUT
+          else
+            echo "model=base" >> $GITHUB_OUTPUT
+          fi
+
       - name: Transcribe audio
         run: |
           mkdir -p transcripts
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             whisper "${{ github.event.inputs.audio_path }}" \
-              --model ${{ github.event.inputs.model }} \
+              --model ${{ steps.set_model.outputs.model }} \
               --output_dir transcripts
           else
             for f in audio/*.{mp3,wav,m4a,flac}; do
-              whisper "$f" --model ${{ github.event.inputs.model }} --output_dir transcripts
+              if [ -f "$f" ]; then
+                whisper "$f" --model ${{ steps.set_model.outputs.model }} --output_dir transcripts
+              fi
             done
           fi
 
