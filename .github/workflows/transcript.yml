@@ -26,7 +26,6 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-          cache: 'pip'
 
       - name: Cache system and pip dependencies
         uses: actions/cache@v4.2.3
