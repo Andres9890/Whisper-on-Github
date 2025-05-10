@@ -1,0 +1,54 @@
+name: Transcribe Audio with Whisper
+
+on:
+  push:
+    paths:
+      - 'audio/**'
+  workflow_dispatch:
+    inputs:
+      audio_path:
+        description: 'Path to audio file (relative to repo root)'
+        required: false
+        default: 'audio/sample.mp3'
+      model:
+        description: 'Whisper model to use (tiny, base, small, medium, large)'
+        required: false
+        default: 'base'
+
+jobs:
+  transcribe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install system deps & Whisper
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          pip install git+https://github.com/openai/whisper.git
+
+      - name: Transcribe audio
+        run: |
+          mkdir -p transcripts
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            whisper "${{ github.event.inputs.audio_path }}" \
+              --model ${{ github.event.inputs.model }} \
+              --output_dir transcripts
+          else
+            for f in audio/*.{mp3,wav,m4a,flac}; do
+              whisper "$f" --model ${{ github.event.inputs.model }} --output_dir transcripts
+            done
+          fi
+
+      - name: Upload transcripts
+        uses: actions/upload-artifact@v3
+        with:
+          name: whisper-transcripts
+          path: transcripts/
