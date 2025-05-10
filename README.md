@@ -1,4 +1,4 @@
-# Whisper On Github
+# Whisper on Github
 
 A GitHub template repository for automatic audio file transcription using OpenAI's Whisper on Github, powered by GitHub Actions
 
