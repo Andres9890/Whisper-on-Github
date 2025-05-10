@@ -3,6 +3,7 @@
 A GitHub template repository for automatic audio file transcription using OpenAI's Whisper on Github, powered by GitHub Actions
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+[![Transcribe Audio with Whisper](https://github.com/Andres9890/Whisper-on-Github/actions/workflows/transcript.yml/badge.svg)](https://github.com/Andres9890/Whisper-on-Github/actions/workflows/transcript.yml)
 
 ## Features
 
