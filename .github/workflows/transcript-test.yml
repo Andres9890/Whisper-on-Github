@@ -132,7 +132,7 @@ jobs:
                 whisper "$f" \
                   --model ${{ steps.set_model.outputs.model }} \
                   --output_dir transcripts \
-                  --output_format txt,srt,vtt
+                  --output_format all
               fi
             done
           fi
