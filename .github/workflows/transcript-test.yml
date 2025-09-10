@@ -1,0 +1,156 @@
+name: Transcribe Audio with Whisper
+
+on:
+  push:
+    paths:
+      - 'audio/**'
+  workflow_dispatch:
+    inputs:
+      audio_path:
+        description: 'Path to audio file (relative to repo root)'
+        required: false
+        default: 'audio/sample.mp3'
+      audio_url:
+        description: 'URL to download audio/video file from'
+        required: false
+        default: ''
+      model:
+        description: 'Whisper model to use (tiny, base, small, medium, large)'
+        required: false
+        default: 'base'
+      output_filename:
+        description: 'Custom filename for downloaded file (optional)'
+        required: false
+        default: ''
+
+jobs:
+  transcribe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install system deps & Whisper
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg curl
+          python -m pip install --upgrade pip
+          pip install git+https://github.com/openai/whisper.git
+
+      - name: Set model variable
+        id: set_model
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "model=${{ github.event.inputs.model }}" >> $GITHUB_OUTPUT
+          else
+            echo "model=base" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download audio/video from URL
+        if: github.event.inputs.audio_url != ''
+        run: |
+          mkdir -p downloads
+          cd downloads
+          
+          # Determine filename
+          if [ -n "${{ github.event.inputs.output_filename }}" ]; then
+            FILENAME="${{ github.event.inputs.output_filename }}"
+          else
+            # Extract filename from URL, fallback to timestamp-based name
+            FILENAME=$(basename "${{ github.event.inputs.audio_url }}" | sed 's/[?#].*//')
+            if [ -z "$FILENAME" ] || [ "$FILENAME" = "${{ github.event.inputs.audio_url }}" ]; then
+              FILENAME="downloaded_$(date +%Y%m%d_%H%M%S)"
+            fi
+          fi
+          
+          echo "Downloading from: ${{ github.event.inputs.audio_url }}"
+          echo "Saving as: $FILENAME"
+          
+          # Download with curl, following redirects and showing progress
+          curl -L -o "$FILENAME" \
+            --connect-timeout 30 \
+            --max-time 1800 \
+            --retry 3 \
+            --retry-delay 5 \
+            --user-agent "Mozilla/5.0 (compatible; GitHub-Actions)" \
+            "${{ github.event.inputs.audio_url }}"
+          
+          # Verify download
+          if [ -f "$FILENAME" ] && [ -s "$FILENAME" ]; then
+            echo "Download successful: $(ls -lh "$FILENAME")"
+            echo "DOWNLOADED_FILE=$FILENAME" >> $GITHUB_ENV
+            
+            # Check if it's a video file and extract audio if needed
+            FILE_TYPE=$(file --mime-type -b "$FILENAME" 2>/dev/null || echo "unknown")
+            echo "File type: $FILE_TYPE"
+            
+            if echo "$FILE_TYPE" | grep -q "video\|application/octet-stream"; then
+              echo "Video file detected, extracting audio..."
+              AUDIO_FILE="${FILENAME%.*}_audio.wav"
+              ffmpeg -i "$FILENAME" -vn -acodec pcm_s16le -ar 16000 -ac 1 "$AUDIO_FILE" -y
+              if [ -f "$AUDIO_FILE" ]; then
+                echo "Audio extraction successful"
+                echo "DOWNLOADED_FILE=$AUDIO_FILE" >> $GITHUB_ENV
+              fi
+            fi
+          else
+            echo "Download failed or file is empty"
+            exit 1
+          fi
+
+      - name: Transcribe audio
+        run: |
+          mkdir -p transcripts
+          
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "${{ github.event.inputs.audio_url }}" ]; then
+              # Transcribe downloaded file
+              echo "Transcribing downloaded file: $DOWNLOADED_FILE"
+              whisper "downloads/$DOWNLOADED_FILE" \
+                --model ${{ steps.set_model.outputs.model }} \
+                --output_dir transcripts \
+                --output_format txt,srt,vtt
+            else
+              # Transcribe specified local file
+              echo "Transcribing local file: ${{ github.event.inputs.audio_path }}"
+              whisper "${{ github.event.inputs.audio_path }}" \
+                --model ${{ steps.set_model.outputs.model }} \
+                --output_dir transcripts \
+                --output_format txt,srt,vtt
+            fi
+          else
+            # Auto-transcribe all audio files in audio/ directory
+            echo "Auto-transcribing files in audio/ directory"
+            for f in audio/*.{mp3,wav,m4a,flac,ogg,opus}; do
+              if [ -f "$f" ]; then
+                echo "Transcribing: $f"
+                whisper "$f" \
+                  --model ${{ steps.set_model.outputs.model }} \
+                  --output_dir transcripts \
+                  --output_format txt,srt,vtt
+              fi
+            done
+          fi
+
+      - name: List generated files
+        run: |
+          echo "Generated transcript files:"
+          ls -la transcripts/ || echo "No transcript files found"
+
+      - name: Upload transcripts
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-transcripts
+          path: transcripts/
+
+      - name: Upload downloaded media (if any)
+        if: github.event.inputs.audio_url != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloaded-media
+          path: downloads/
