@@ -7,32 +7,33 @@ on:
   workflow_dispatch:
     inputs:
       audio_path:
-        description: 'Path to audio file (relative to repo root)'
+        description: 'Path to local audio file (relative to repo root)'
         required: false
         default: 'audio/sample.mp3'
+      media_url:
+        description: 'Direct URL to an audio/video file (Overrides audio_path if provided)'
+        required: false
+        default: ''
       model:
         description: 'Whisper model to use (tiny, base, small, medium, large)'
         required: false
         default: 'base'
+      zip_transcripts:
+        description: 'Upload the directory structure (zipped) instead of unzipped files'
+        type: boolean
+        default: false
 
 jobs:
   transcribe:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out code
-        uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@main
 
-      - name: Set up Python 3.9
-        uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@main
         with:
-          python-version: '3.9'
-
-      - name: Install system deps & Whisper
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          python -m pip install --upgrade pip
-          pip install git+https://github.com/openai/whisper.git
+          python-version: '3.x'
 
       - name: Set model variable
         id: set_model
@@ -43,23 +44,67 @@ jobs:
             echo "model=base" >> $GITHUB_OUTPUT
           fi
 
-      - name: Transcribe audio
+      - name: Cache dependencies and models
+        uses: actions/cache@main
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/whisper
+          key: ${{ runner.os }}-whisper-stuff-${{ steps.set_model.outputs.model }}
+          restore-keys: |
+            ${{ runner.os }}-whisper-stuff-
+
+      - name: Install system deps & Whisper
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg wget
+          python -m pip install --upgrade pip
+          pip install git+https://github.com/openai/whisper.git
+
+      - name: Transcribe media
         run: |
           mkdir -p transcripts
+          mkdir -p audio
+          MODEL=${{ steps.set_model.outputs.model }}
+          
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            whisper "${{ github.event.inputs.audio_path }}" \
-              --model ${{ steps.set_model.outputs.model }} \
-              --output_dir transcripts
+            
+            # Check if a URL was provided
+            if [ -n "${{ github.event.inputs.media_url }}" ]; then
+              echo "URL detected. Downloading media..."
+              FILENAME=$(basename "${{ github.event.inputs.media_url }}" | sed 's/\?.*//')
+              if [ -z "$FILENAME" ]; then FILENAME="downloaded_media"; fi
+              
+              wget -q -O "audio/$FILENAME" "${{ github.event.inputs.media_url }}"
+              FILE_TO_TRANSCRIBE="audio/$FILENAME"
+            else
+              FILE_TO_TRANSCRIBE="${{ github.event.inputs.audio_path }}"
+            fi
+            
+            echo "Transcribing: $FILE_TO_TRANSCRIBE"
+            whisper "$FILE_TO_TRANSCRIBE" --model $MODEL --output_dir transcripts
+            
           else
-            for f in audio/*.{mp3,wav,m4a,flac}; do
+            echo "Push event detected. Transcribing directory..."
+            shopt -s nullglob
+            for f in audio/*.{mp3,wav,m4a,flac,mp4,mkv,webm}; do
               if [ -f "$f" ]; then
-                whisper "$f" --model ${{ steps.set_model.outputs.model }} --output_dir transcripts
+                echo "Transcribing $f..."
+                whisper "$f" --model $MODEL --output_dir transcripts
               fi
             done
           fi
 
-      - name: Upload transcripts
-        uses: actions/upload-artifact@v4
+      - name: Upload transcripts as directory
+        if: github.event.inputs.zip_transcripts == 'true'
+        uses: actions/upload-artifact@main
         with:
           name: whisper-transcripts
           path: transcripts/
+
+      - name: Upload unzipped transcript files
+        if: github.event.inputs.zip_transcripts == 'false' || github.event_name == 'push'
+        uses: actions/upload-artifact@main
+        with:
+          name: whisper-transcripts
+          path: transcripts/*
