@@ -50,9 +50,9 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.cache/whisper
-          key: ${{ runner.os }}-whisper-stuff-${{ steps.set_model.outputs.model }}
+          key: ${{ runner.os }}-whisper-${{ hashFiles('.github/workflows/transcript.yml') }}
           restore-keys: |
-            ${{ runner.os }}-whisper-stuff-
+            ${{ runner.os }}-whisper-
 
       - name: Install system deps & Whisper
         run: |
